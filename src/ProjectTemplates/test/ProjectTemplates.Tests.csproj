@@ -10,6 +10,7 @@
 
     <RunTemplateTests Condition="'$(RunTemplateTests)' == ''" >true</RunTemplateTests>
     <SkipTests Condition="'$(RunTemplateTests)' != 'true'">true</SkipTests>
+    <E2EETWLogFilesDir>$([MSBuild]::NormalizeDirectory('$(ArtifactsTestResultsDir)','$(MSBuildProjectName)'))</E2EETWLogFilesDir>
 
     <!-- Tests do not work on Helix or when bin/ directory is not in project directory due to undeclared dependency on test content. -->
     <!-- https://github.com/aspnet/AspNetCore/issues/6857 -->
@@ -62,7 +63,7 @@
       <_Parameter2>true</_Parameter2>
     </AssemblyAttribute>
   </ItemGroup>
-  
+
   <Target Name="PrepareForTest" BeforeTargets="CoreCompile" Condition="$(DesignTimeBuild) != true">
     <PropertyGroup>
       <TestTemplateCreationFolder>$([MSBuild]::NormalizePath('$(OutputPath)$(TestTemplateCreationFolder)'))</TestTemplateCreationFolder>
@@ -71,6 +72,16 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>E2EETWLogFilesDir</_Parameter1>
+        <_Parameter2>$(E2EETWLogFilesDir)</_Parameter2>
+      </AssemblyAttribute>
+
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>ProjectWorkingDir</_Parameter1>
+        <_Parameter2>$(MSBuildProjectDirectory)</_Parameter2>
+      </AssemblyAttribute>
+
       <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
         <_Parameter1>ArtifactsShippingPackagesDir</_Parameter1>
         <_Parameter2>$(ArtifactsShippingPackagesDir)</_Parameter2>
@@ -95,6 +106,8 @@
     <!-- Remove the template creation folders and the package-restore folders to ensure that when we run the tests we don't
          get cached results and changes show up.
     -->
+
+    <Exec Command=" dotnet tool install --version $(DotNetTracePackageVersion) dotnet-trace" />
 
     <ItemGroup>
       <_ExistingFilesFromLastRun Include="$(TestTemplateCreationFolder)**\*" />

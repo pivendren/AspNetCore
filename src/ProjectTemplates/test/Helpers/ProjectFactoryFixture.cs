@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.E2ETesting;
+using Xunit;
 using Xunit.Abstractions;
 
 namespace Templates.Test.Helpers

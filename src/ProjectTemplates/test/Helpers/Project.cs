@@ -18,7 +18,7 @@ using Xunit.Sdk;
 namespace Templates.Test.Helpers
 {
     [DebuggerDisplay("{ToString(),nq}")]
-    public class Project
+    public class Project : IDisposable
     {
         private const string _urls = "http://127.0.0.1:0;https://127.0.0.1:0";
 
@@ -44,6 +44,8 @@ namespace Templates.Test.Helpers
 
         public ITestOutputHelper Output { get; set; }
         public IMessageSink DiagnosticsMessageSink { get; set; }
+        internal ProcessEx RunBuiltAppTraceProcess { get; private set; }
+        internal ProcessEx RunPublishedAppTraceProcess { get; private set; }
 
         internal async Task<ProcessEx> RunDotNetNewAsync(
             string templateName,
@@ -108,7 +110,7 @@ namespace Templates.Test.Helpers
             }
         }
 
-        internal async Task<ProcessEx> RunDotNetPublishAsync(bool takeNodeLock = false, IDictionary<string,string> packageOptions = null)
+        internal async Task<ProcessEx> RunDotNetPublishAsync(bool takeNodeLock = false, IDictionary<string, string> packageOptions = null)
         {
             Output.WriteLine("Publishing ASP.NET application...");
 
@@ -134,7 +136,7 @@ namespace Templates.Test.Helpers
             }
         }
 
-        internal async Task<ProcessEx> RunDotNetBuildAsync(bool takeNodeLock = false, IDictionary<string,string> packageOptions = null)
+        internal async Task<ProcessEx> RunDotNetBuildAsync(bool takeNodeLock = false, IDictionary<string, string> packageOptions = null)
         {
             Output.WriteLine("Building ASP.NET application...");
 
@@ -205,11 +207,17 @@ namespace Templates.Test.Helpers
             {
                 ["ASPNETCORE_URLS"] = _urls,
                 ["ASPNETCORE_ENVIRONMENT"] = "Development",
-                ["ASPNETCORE_Kestrel__EndpointDefaults__Protocols"] = "Http1"
+                ["ASPNETCORE_Kestrel__EndpointDefaults__Protocols"] = "Http1",
+                ["ASPNETCORE_Logging__EventSource__LogLevel__Default"] = "Debug",
+                ["ASPNETCORE_Logging__EventSource__LogLevel__Microsoft"] = "Debug",
+                ["ASPNETCORE_Logging__EventSource__IncludeScopes"] = "true",
             };
 
             var projectDll = Path.Combine(TemplateBuildDir, $"{ProjectName}.dll");
-            return new AspNetProcess(Output, TemplateOutputDir, projectDll, environment, hasListeningUri: hasListeningUri);
+            var process = new AspNetProcess(Output, TemplateOutputDir, projectDll, environment, hasListeningUri: hasListeningUri);
+            RunBuiltAppTraceProcess =  CaptureProcessTraces(process, $"{ProjectName}.build");
+
+            return process;
         }
 
         internal AspNetProcess StartPublishedProjectAsync(bool hasListeningUri = true)
@@ -217,11 +225,33 @@ namespace Templates.Test.Helpers
             var environment = new Dictionary<string, string>
             {
                 ["ASPNETCORE_URLS"] = _urls,
-                ["ASPNETCORE_Kestrel__EndpointDefaults__Protocols"] = "Http1"
+                ["ASPNETCORE_Kestrel__EndpointDefaults__Protocols"] = "Http1",
+                ["ASPNETCORE_Logging__EventSource__LogLevel__Default"] = "Debug",
+                ["ASPNETCORE_Logging__EventSource__LogLevel__Microsoft"] = "Debug",
+                ["ASPNETCORE_Logging__EventSource__IncludeScopes"] = "true",
             };
 
             var projectDll = $"{ProjectName}.dll";
-            return new AspNetProcess(Output, TemplatePublishDir, projectDll, environment, hasListeningUri: hasListeningUri);
+            var process = new AspNetProcess(Output, TemplatePublishDir, projectDll, environment, hasListeningUri: hasListeningUri);
+            RunPublishedAppTraceProcess = CaptureProcessTraces(process, $"{ProjectName}.publish");
+            return process;
+        }
+
+        internal ProcessEx CaptureProcessTraces(AspNetProcess process, string fileIdentifier)
+        {
+            string traceOutputPath = $"{Path.Combine(GetEtwTargetDir(), fileIdentifier)}.nettrace";
+            var traceArguments = $"trace collect -p {process.Process.Id} --providers Microsoft-Extensions-Logging -o {traceOutputPath} --profile None";
+            var startInfo = new ProcessStartInfo("dotnet", traceArguments)
+            {
+                WorkingDirectory = GetProjectWorkingDir(),
+                CreateNoWindow = false,
+            };
+
+            Output.WriteLine($"Writing traces to {traceOutputPath}");
+
+            var tracesProcess = Process.Start(startInfo);
+            var traces = new ProcessEx(Output, tracesProcess, captureInputOutput: false);
+            return traces;
         }
 
         internal async Task<ProcessEx> RestoreWithRetryAsync(ITestOutputHelper output, string workingDirectory)
@@ -411,11 +441,6 @@ namespace Templates.Test.Helpers
             }
         }
 
-        public void Dispose()
-        {
-            DeleteOutputDirectory();
-        }
-
         public void DeleteOutputDirectory()
         {
             const int NumAttempts = 10;
@@ -508,5 +533,29 @@ namespace Templates.Test.Helpers
         }
 
         public override string ToString() => $"{ProjectName}: {TemplateOutputDir}";
+
+        private static string GetEtwTargetDir()
+        {
+            return Assembly.GetExecutingAssembly()
+                .GetCustomAttributes<AssemblyMetadataAttribute>()
+                .Single(ama => ama.Key == "E2EETWLogFilesDir")
+                .Value;
+        }
+
+        private static string GetProjectWorkingDir()
+        {
+            return Assembly.GetExecutingAssembly()
+                .GetCustomAttributes<AssemblyMetadataAttribute>()
+                .Single(ama => ama.Key == "ProjectWorkingDir")
+                .Value;
+        }
+
+        public void Dispose()
+        {
+            RunBuiltAppTraceProcess?.Dispose();
+            RunPublishedAppTraceProcess?.Dispose();
+
+            DeleteOutputDirectory();
+        }
     }
 }

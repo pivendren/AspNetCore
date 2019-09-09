@@ -24,25 +24,35 @@ namespace Templates.Test.Helpers
         private readonly StringBuilder _stderrCapture;
         private readonly StringBuilder _stdoutCapture;
         private readonly object _pipeCaptureLock = new object();
+        private readonly bool _captureInputOutput;
         private BlockingCollection<string> _stdoutLines;
         private TaskCompletionSource<int> _exited;
 
         public ProcessEx(ITestOutputHelper output, Process proc)
+            : this(output, proc, captureInputOutput: true)
         {
-            _output = output;
-            _stdoutCapture = new StringBuilder();
-            _stderrCapture = new StringBuilder();
-            _stdoutLines = new BlockingCollection<string>();
+        }
 
-            _process = proc;
+        public ProcessEx(ITestOutputHelper output, Process proc, bool captureInputOutput)
+        {
+            _captureInputOutput = captureInputOutput;
             proc.EnableRaisingEvents = true;
-            proc.OutputDataReceived += OnOutputData;
-            proc.ErrorDataReceived += OnErrorData;
+            _process = proc;
             proc.Exited += OnProcessExited;
-            proc.BeginOutputReadLine();
-            proc.BeginErrorReadLine();
-
             _exited = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            if (captureInputOutput)
+            {
+                _output = output;
+                _stdoutCapture = new StringBuilder();
+                _stderrCapture = new StringBuilder();
+                _stdoutLines = new BlockingCollection<string>();
+
+                proc.OutputDataReceived += OnOutputData;
+                proc.ErrorDataReceived += OnErrorData;
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+            }
         }
 
         public Task Exited => _exited.Task;
@@ -153,7 +163,7 @@ namespace Templates.Test.Helpers
         private void OnProcessExited(object sender, EventArgs e)
         {
             _process.WaitForExit();
-            _stdoutLines.CompleteAdding();
+            _stdoutLines?.CompleteAdding();
             _stdoutLines = null;
             _exited.TrySetResult(_process.ExitCode);
         }
@@ -188,15 +198,19 @@ namespace Templates.Test.Helpers
         {
             if (_process != null && !_process.HasExited)
             {
-                _process.KillTree();
+                _process.Kill(entireProcessTree: true);
             }
 
-            _process.CancelOutputRead();
-            _process.CancelErrorRead();
+            if (_captureInputOutput)
+            {
+                _process.CancelOutputRead();
+                _process.CancelErrorRead();
 
-            _process.ErrorDataReceived -= OnErrorData;
-            _process.OutputDataReceived -= OnOutputData;
-            _process.Exited -= OnProcessExited;
+                _process.ErrorDataReceived -= OnErrorData;
+                _process.OutputDataReceived -= OnOutputData;
+                _process.Exited -= OnProcessExited;
+            }
+
             _process.Dispose();
         }
     }
